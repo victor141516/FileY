@@ -1,0 +1,37 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Directory {
+  id              String      @unique @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name            String      @db.VarChar
+  directoryId     String?     @db.Uuid
+  userId          String      @db.Uuid
+  Directory       Directory?  @relation("DirectoryToDirectory_directoryId", fields: [directoryId], references: [id])
+  User            User        @relation(fields: [userId], references: [id])
+  other_Directory Directory[] @relation("DirectoryToDirectory_directoryId")
+  File            File[]
+}
+
+model File {
+  id             String    @unique @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name           String    @db.VarChar
+  directoryId    String    @db.Uuid
+  metadata       Json      @default("{}") @db.Json
+  userId         String    @db.Uuid
+  telegramFileId String?   @db.VarChar
+  Directory      Directory @relation(fields: [directoryId], references: [id])
+  User           User      @relation(fields: [userId], references: [id])
+}
+
+model User {
+  id         String      @unique @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  telegramId String?     @db.VarChar
+  Directory  Directory[]
+  File       File[]
+}

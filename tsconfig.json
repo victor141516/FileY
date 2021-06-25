@@ -1,0 +1,32 @@
+{
+    "compilerOptions": {
+        "baseUrl": ".",
+        "outDir": "dist",
+        "module": "CommonJS",
+        "moduleResolution": "node",
+        "strict": true,
+        "declaration": true,
+        "noUnusedLocals": true,
+        "esModuleInterop": true,
+        "lib": [
+            "ESNext",
+            "DOM"
+        ],
+        "types": [
+            "node"
+        ],
+        "paths": {
+            "src/*": [
+                "src/*"
+            ],
+            "/@types/*": [
+                "types/*"
+            ]
+        },
+        "emitDecoratorMetadata": true,
+        "experimentalDecorators": true
+    },
+    "include": [
+        "src"
+    ]
+}
