@@ -2,7 +2,7 @@ import { File } from '@prisma/client'
 import { Context, Markup, Telegraf } from 'telegraf'
 import { CallbackQuery, Message } from 'telegraf/typings/core/types/typegram'
 
-import { ExtendedBdObject, Filesystem } from '../filesystem'
+import { DirectoryExistsWithSameNameError, ExtendedBdObject, FileExistsWithSameNameError, Filesystem, ForbiddenNameError } from '../filesystem'
 import { getIcon } from './icons'
 
 enum BUTTON_ACTION {
@@ -10,37 +10,54 @@ enum BUTTON_ACTION {
   cd = 'c',
   cat = 'm',
   confirmDelete = 'yd',
-  refuteDelete = 'nd'
+  refuteDelete = 'nd',
+  nextPage = 'np',
+  prevPage = 'pp',
+  rename = 'ren'
 }
 
 class ButtonAction {
   obj: ExtendedBdObject
   action: BUTTON_ACTION
+  extra?: string
 
-  constructor(obj: ExtendedBdObject, action: BUTTON_ACTION) {
+  constructor(obj: ExtendedBdObject, action: BUTTON_ACTION, extra?: string) {
     this.obj = obj
     this.action = action
+    if (extra) {
+      this.extra = extra
+    }
   }
 
   serialize(): string {
-    return `${this.action}#${this.obj.isDirectory ? 'd' : 'f'}#${this.obj.id}`
+    return `${this.action}#${this.obj.isDirectory ? 'd' : 'f'}#${this.obj.id}${this.extra ? '#' + this.extra : ''}`
   }
 
   static async parse(serialized: string, fs: Filesystem): Promise<ButtonAction> {
-    const [action, objType, objId] = serialized.split('#')
+    const [action, objType, objId, extra] = serialized.split('#')
 
     let obj: ExtendedBdObject
     if (objType === 'd') obj = { isFile: false, isDirectory: true, ...(await fs.getDirectory(objId))! }
     else if (objType === 'f') obj = { isFile: true, isDirectory: false, ...(await fs.getFile(objId))! }
 
-    return new ButtonAction(obj!, action as BUTTON_ACTION)
+    return new ButtonAction(obj!, action as BUTTON_ACTION, extra)
   }
+}
+
+enum SpecialModes {
+  rename
+}
+
+type SpecialModeData = {
+  mode: SpecialModes
+  relatedMessageId: string
 }
 
 export class TelegramManager {
   tgBot: Telegraf
   fsFactory: (tgUserId: string) => Filesystem
   filesystems: Record<string, Filesystem> = {}
+  private specialModes = {} as Record<string, SpecialModeData>
 
   constructor(tgBot: Telegraf, fsFactory: (tgUserId: string) => Filesystem) {
     this.tgBot = tgBot
@@ -75,6 +92,12 @@ export class TelegramManager {
         return await this.handleConfirmDelete(ctx, button, true)
       } else if (button.action === BUTTON_ACTION.refuteDelete) {
         return await this.handleConfirmDelete(ctx, button, false)
+      } else if (button.action === BUTTON_ACTION.nextPage) {
+        return await this.changePage(ctx, Number.parseInt(button.extra!))
+      } else if (button.action === BUTTON_ACTION.prevPage) {
+        return await this.changePage(ctx, Number.parseInt(button.extra!))
+      } else if (button.action === BUTTON_ACTION.rename) {
+        return await this.handleRenameInit(ctx, button)
       }
     })
   }
@@ -82,6 +105,12 @@ export class TelegramManager {
   private async handleIncomingMessage(ctx: Context): Promise<void> {
     const attachTypes = ['document', 'audio', 'document', 'photo', 'video', 'video_note', 'voice', 'contact'] as const
     const fs = await this.getFs(ctx)
+
+    if (this.specialModes[ctx.chat!.id]) {
+      if (this.specialModes[ctx.chat!.id].mode === SpecialModes.rename) {
+        await this.handleRenameAction(ctx)
+      }
+    }
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const untypedMsg = ctx.message as Record<string, any>
 
@@ -93,8 +122,41 @@ export class TelegramManager {
 
     fileName = fileName ?? untypedMsg?.text ?? ctx.message!.message_id.toString()
 
-    await fs.touch(fileName!, ctx.message!.message_id.toString(), ctx.message)
+    await fs.touch(fileName!, ctx.message!.message_id.toString(), ctx.message).catch((e) => {
+      if (e instanceof DirectoryExistsWithSameNameError) {
+        return ctx.reply(`There is already a directory with the same name: ${fileName}`)
+      } else if (e instanceof FileExistsWithSameNameError) {
+        return ctx.reply(`There is already a file with the same name: ${fileName}`)
+      } else if (e instanceof ForbiddenNameError) {
+        return ctx.reply(`That name is forbidden: ${fileName}`)
+      } else throw e
+    })
     await this.handleLs(ctx)
+  }
+
+  private async handleRenameInit(ctx: Context, button: ButtonAction): Promise<void> {
+    this.specialModes[ctx.chat!.id.toString()] = {
+      mode: SpecialModes.rename,
+      relatedMessageId: (button.obj as File).telegramFileId!
+    }
+    await ctx.reply('Write the new name and send the message')
+  }
+
+  private async handleRenameAction(ctx: Context): Promise<void> {
+    const fs = await this.getFs(ctx)
+    const fileToRename = (await fs.getFileUsingTelegramMessageId(this.specialModes[ctx.chat!.id].relatedMessageId))!
+    const newName = (ctx.message as Message.TextMessage).text
+    await fs.rename({ isDirectory: false, isFile: true, ...fileToRename }, newName).catch((e) => {
+      if (e instanceof FileExistsWithSameNameError) {
+        return ctx.reply(`There is already a file with the same name: ${newName}`)
+      } else throw e
+    })
+    delete this.specialModes[ctx.chat!.id]
+    return await this.handleLs(ctx)
+  }
+
+  private async changePage(ctx: Context, page: number): Promise<void> {
+    await this.handleLs(ctx, page)
   }
 
   private async handleMkdir(ctx: Context): Promise<void> {
@@ -144,13 +206,20 @@ export class TelegramManager {
     }
   }
 
-  private async handleLs(ctx: Context): Promise<void> {
+  private async handleLs(ctx: Context, page = 0): Promise<void> {
+    const PAGE_SIZE = 10 as const
     const fs = await this.getFs(ctx)
     const lsRes = await fs.ls()
+    const pageContent = lsRes.slice(PAGE_SIZE * page, PAGE_SIZE * (page + 1))
+    const currentDirectory = {
+      isDirectory: true,
+      isFile: false,
+      ...fs.currentPath[fs.currentPath.length - 1]
+    }
     const parentDirectory = {
       isDirectory: true,
       isFile: false,
-      ...(fs.currentPath.slice(-2, -1)?.[0] ?? fs.currentPath[fs.currentPath.length - 1])
+      ...(fs.currentPath.slice(-2, -1)?.[0] ?? currentDirectory)
     }
     const buttons = [
       [
@@ -162,12 +231,17 @@ export class TelegramManager {
       ]
     ]
     buttons.push(
-      ...lsRes.map((e) => {
+      ...pageContent.map((e) => {
         return [
           {
             text: `${getIcon(e)} ${e.name}`,
             // eslint-disable-next-line camelcase
             callback_data: new ButtonAction(e, e.isDirectory ? BUTTON_ACTION.cd : BUTTON_ACTION.cat).serialize()
+          },
+          {
+            text: '✏',
+            // eslint-disable-next-line camelcase
+            callback_data: new ButtonAction(e, BUTTON_ACTION.rename).serialize()
           },
           {
             text: '❌',
@@ -177,7 +251,26 @@ export class TelegramManager {
         ]
       })
     )
-    buttons.push()
+    if (lsRes.length > pageContent.length) {
+      buttons.push([])
+      if (page > 0) {
+        // if not first page, show previous
+        buttons[buttons.length - 1].push({
+          text: '⬅ Previous',
+          // eslint-disable-next-line camelcase
+          callback_data: new ButtonAction(currentDirectory, BUTTON_ACTION.prevPage, (page - 1).toString()).serialize()
+        })
+      }
+
+      if (pageContent[pageContent.length - 1] !== lsRes[lsRes.length - 1]) {
+        // if the last item of all the items is not shown in the current page, show next
+        buttons[buttons.length - 1].push({
+          text: '➡ Next',
+          // eslint-disable-next-line camelcase
+          callback_data: new ButtonAction(currentDirectory, BUTTON_ACTION.nextPage, (page + 1).toString()).serialize()
+        })
+      }
+    }
     const markup = Markup.inlineKeyboard(buttons).reply_markup
     // eslint-disable-next-line camelcase
     ctx.reply(`Path: \`${fs.pwd()}\``, { reply_markup: markup, parse_mode: 'MarkdownV2' })

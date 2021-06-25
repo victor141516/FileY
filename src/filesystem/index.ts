@@ -1,13 +1,16 @@
 import { Directory, File, PrismaClient, User } from '@prisma/client'
 
-export class FilesystemError extends Error {}
+export class FilesystemError {
+  message?: string
+  constructor(message?: string) {
+    this.message = message
+  }
+}
+export class CannotFindFileOrDirectoryError extends FilesystemError {}
 export class CannotFindUserError extends FilesystemError {}
 export class DirectoryDoesntExistsError extends FilesystemError {}
-export class DirectoryAlreadyExistsError extends FilesystemError {}
-export class FileExistsWithSameNameError extends FilesystemError {}
-export class FileAlreadyExistsError extends FilesystemError {}
 export class DirectoryExistsWithSameNameError extends FilesystemError {}
-export class CannotFindFileOrDirectoryError extends FilesystemError {}
+export class FileExistsWithSameNameError extends FilesystemError {}
 export class ForbiddenNameError extends FilesystemError {}
 
 const DOT_DOT = '..'
@@ -79,6 +82,15 @@ export class Filesystem {
     })
   }
 
+  async getFileUsingTelegramMessageId(tgMsgId: string): Promise<File | null> {
+    return await this.prisma.file.findFirst({
+      where: {
+        telegramFileId: tgMsgId,
+        ...this.getUserAttr()
+      }
+    })
+  }
+
   async getDirectory(id: string): Promise<Directory | null> {
     return await this.prisma.directory.findFirst({
       where: {
@@ -132,7 +144,7 @@ export class Filesystem {
         ...this.getUserAndDirAttrs()
       }
     })
-    if (dir) throw new DirectoryAlreadyExistsError(name)
+    if (dir) throw new DirectoryExistsWithSameNameError(name)
     if (file) throw new FileExistsWithSameNameError(name)
     await this.prisma.directory.create({
       data: {
@@ -158,7 +170,7 @@ export class Filesystem {
         ...this.getUserAndDirAttrs()
       }
     })
-    if (dir) throw new FileAlreadyExistsError(name)
+    if (dir) throw new FileExistsWithSameNameError(name)
     if (file) throw new DirectoryExistsWithSameNameError(name)
 
     await this.prisma.file.create({
@@ -205,5 +217,17 @@ export class Filesystem {
       ...(await this.prisma.directory.findMany({ where: this.getUserAndDirAttrs() })).map((e) => ({ isFile: false, isDirectory: true, ...e })),
       ...(await this.prisma.file.findMany({ where: this.getUserAndDirAttrs() })).map((e) => ({ isFile: true, isDirectory: false, ...e }))
     ]
+  }
+
+  async rename(element: ExtendedBdObject, newName: string): Promise<void> {
+    if (element.isFile) {
+      const alreadyExists = await this.prisma.file.findFirst({ where: { name: newName, directoryId: element.directoryId! } })
+      if (alreadyExists) throw new FileExistsWithSameNameError(newName)
+      await this.prisma.file.update({ data: { name: newName }, where: { id: element.id } })
+    } else {
+      const alreadyExists = await this.prisma.directory.findFirst({ where: { name: newName, directoryId: element.directoryId! } })
+      if (alreadyExists) throw new DirectoryExistsWithSameNameError(newName)
+      await this.prisma.directory.update({ data: { name: newName }, where: { id: element.id } })
+    }
   }
 }

@@ -22,9 +22,12 @@ if (CONFIG.HTTP_SERVE) {
   tgManager.poll()
 }
 
-async function exit() {
+function exit() {
   console.info('Stopping services')
-  await Promise.all([server.closeServer(), prisma.$disconnect(), tgBot.stop('SIGINT'), tgBot.stop('SIGTERM')])
+  server.closeServer()
+  prisma.$disconnect()
+  tgBot.stop('SIGINT')
+  tgBot.stop('SIGTERM')
   console.info('Bye!')
 }
 process.once('SIGINT', () => exit())
