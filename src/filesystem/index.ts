@@ -3,7 +3,9 @@ import { Directory, File, PrismaClient, User } from '@prisma/client'
 export class FilesystemError {
   message?: string
   constructor(message?: string) {
-    this.message = message
+    if (message) {
+      this.message = message
+    }
   }
 }
 export class CannotFindFileOrDirectoryError extends FilesystemError {}
