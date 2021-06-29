@@ -48,9 +48,15 @@ enum SpecialModes {
   rename
 }
 
+interface SpecialModeRenameData {
+  objectId: string
+  isFile: boolean
+  isDirectory: boolean
+}
+
 type SpecialModeData = {
   mode: SpecialModes
-  relatedMessageId: string
+  data: unknown
 }
 
 export class TelegramManager {
@@ -108,7 +114,7 @@ export class TelegramManager {
 
     if (this.specialModes[ctx.chat!.id]) {
       if (this.specialModes[ctx.chat!.id].mode === SpecialModes.rename) {
-        await this.handleRenameAction(ctx)
+        return await this.handleRenameAction(ctx)
       }
     }
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -137,18 +143,28 @@ export class TelegramManager {
   private async handleRenameInit(ctx: Context, button: ButtonAction): Promise<void> {
     this.specialModes[ctx.chat!.id.toString()] = {
       mode: SpecialModes.rename,
-      relatedMessageId: (button.obj as File).telegramFileId!
+      data: { objectId: button.obj.id, isFile: button.obj.isFile, isDirectory: button.obj.isDirectory } as SpecialModeRenameData
     }
     await ctx.reply('Write the new name and send the message')
   }
 
   private async handleRenameAction(ctx: Context): Promise<void> {
-    const fs = await this.getFs(ctx)
-    const fileToRename = (await fs.getFileUsingTelegramMessageId(this.specialModes[ctx.chat!.id].relatedMessageId))!
     const newName = (ctx.message as Message.TextMessage).text
-    await fs.rename({ isDirectory: false, isFile: true, ...fileToRename }, newName).catch((e) => {
+    const fs = await this.getFs(ctx)
+    const specialModeData = this.specialModes[ctx.chat!.id].data as SpecialModeRenameData
+    let renameOperation: Promise<void>
+    if (specialModeData.isFile) {
+      const fileToRename = { isFile: true, isDirectory: false, ...(await fs.getFile(specialModeData.objectId))! }
+      renameOperation = fs.rename(fileToRename, newName)
+    } else {
+      const directoryToRename = { isFile: false, isDirectory: true, ...(await fs.getDirectory(specialModeData.objectId))! }
+      renameOperation = fs.rename(directoryToRename, newName)
+    }
+    await renameOperation.catch((e) => {
       if (e instanceof FileExistsWithSameNameError) {
         return ctx.reply(`There is already a file with the same name: ${newName}`)
+      } else if (e instanceof DirectoryExistsWithSameNameError) {
+        return ctx.reply(`There is already a directory with the same name: ${newName}`)
       } else throw e
     })
     delete this.specialModes[ctx.chat!.id]
