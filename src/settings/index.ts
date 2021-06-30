@@ -1,4 +1,4 @@
-import { PrismaClient } from '@prisma/client'
+import { PrismaClient, User } from '@prisma/client'
 
 interface Settings {
   showListOptions: boolean
@@ -12,7 +12,7 @@ export class UserSettings {
   prisma: PrismaClient
   telegramUserId: string
   ready: Promise<void>
-  private userId: string | undefined
+  private user?: User
   private cachedSettings: Settings | undefined
 
   constructor(prisma: PrismaClient, telegramUserId: string) {
@@ -22,13 +22,18 @@ export class UserSettings {
   }
 
   async init(): Promise<void> {
-    this.userId = (await this.prisma.user.findFirst({ where: { telegramId: this.telegramUserId } }))!.id
+    console.log(`New user connected: [TG=${this.telegramUserId}]`)
+    let user = await this.prisma.user.findFirst({ where: { telegramId: this.telegramUserId } })
+    if (!user) {
+      user = await this.prisma.user.create({ data: { telegramId: this.telegramUserId } })
+    }
+    this.user = user
   }
 
   async get(): Promise<Settings> {
     await this.ready
     if (!this.cachedSettings) {
-      this.cachedSettings = { ...DEFAULT_SETTINGS, ...((await this.prisma.user.findFirst({ where: { id: this.userId! } }))!.settings as unknown as Settings) }
+      this.cachedSettings = { ...DEFAULT_SETTINGS, ...((await this.prisma.user.findFirst({ where: { id: this.user!.id } }))!.settings as unknown as Settings) }
     }
     return this.cachedSettings
   }
@@ -37,14 +42,15 @@ export class UserSettings {
     await this.ready
     await this.prisma.user.update({
       where: {
-        id: this.userId!
+        id: this.user!.id
       },
       data: {
         settings: {
           ...DEFAULT_SETTINGS,
           ...(await this.get()),
           ...{ [key]: value }
-        }
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        } as any
       }
     })
     this.cachedSettings = undefined

@@ -37,18 +37,8 @@ export class Filesystem {
     this.ready = this.init()
   }
 
-  private getUserAttr(): { userId: string } {
-    return { userId: this.user!.id }
-  }
-
-  private getUserAndDirAttrs(): { userId: string; directoryId: string } {
-    return {
-      ...this.getUserAttr(),
-      directoryId: this.currentPath[this.currentPath.length - 1].id
-    }
-  }
-
   private async init(): Promise<void> {
+    console.log(`New user connected: [TG=${this.telegramUserId}]`)
     let user = await this.prisma.user.findFirst({ where: { telegramId: this.telegramUserId } })
     if (!user) {
       user = await this.prisma.user.create({ data: { telegramId: this.telegramUserId } })
@@ -73,6 +63,17 @@ export class Filesystem {
     }
 
     this.currentPath.push(dir)
+  }
+
+  private getUserAttr(): { userId: string } {
+    return { userId: this.user!.id }
+  }
+
+  private getUserAndDirAttrs(): { userId: string; directoryId: string } {
+    return {
+      ...this.getUserAttr(),
+      directoryId: this.currentPath[this.currentPath.length - 1].id
+    }
   }
 
   async getFile(id: string): Promise<File | null> {

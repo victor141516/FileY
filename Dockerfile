@@ -18,6 +18,7 @@ RUN apt-get update && \
     apt-get clean
 COPY --from=builder /build/dist /app
 COPY --from=builder /build/node_modules/.prisma /app/node_modules/.prisma
-COPY package.json package-lock.json /app/
+COPY prisma/ /app/
+COPY package.json package-lock.json docker-init.sh /app/
 RUN npm ci --only=prod
-CMD [ "node", "index.js" ]
+CMD [ "./docker-init.sh" ]
