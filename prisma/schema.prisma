@@ -32,6 +32,7 @@ model File {
 model User {
   id         String      @unique @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   telegramId String?     @db.VarChar
+  settings   Json        @default("{}") @db.Json
   Directory  Directory[]
   File       File[]
 }

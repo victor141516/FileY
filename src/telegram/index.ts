@@ -3,6 +3,7 @@ import { Context, Markup, Telegraf } from 'telegraf'
 import { CallbackQuery, Message } from 'telegraf/typings/core/types/typegram'
 
 import { DirectoryExistsWithSameNameError, ExtendedBdObject, FileExistsWithSameNameError, Filesystem, ForbiddenNameError } from '../filesystem'
+import { UserSettings } from '../settings'
 import { getIcon } from './icons'
 
 enum BUTTON_ACTION {
@@ -62,12 +63,15 @@ type SpecialModeData = {
 export class TelegramManager {
   tgBot: Telegraf
   fsFactory: (tgUserId: string) => Filesystem
+  settingsFactory: (tgUserId: string) => UserSettings
   filesystems: Record<string, Filesystem> = {}
+  userSettings: Record<string, UserSettings> = {}
   private specialModes = {} as Record<string, SpecialModeData>
 
-  constructor(tgBot: Telegraf, fsFactory: (tgUserId: string) => Filesystem) {
+  constructor(tgBot: Telegraf, fsFactory: (tgUserId: string) => Filesystem, settingsFactory: (tgUserId: string) => UserSettings) {
     this.tgBot = tgBot
     this.fsFactory = fsFactory
+    this.settingsFactory = settingsFactory
   }
 
   async getFs(ctx: Context): Promise<Filesystem> {
@@ -79,10 +83,20 @@ export class TelegramManager {
     return this.filesystems[tgUserId]
   }
 
+  async getSettings(ctx: Context): Promise<UserSettings> {
+    const tgUserId = ctx.chat!.id.toString()
+    if (!this.userSettings[tgUserId]) {
+      this.userSettings[tgUserId] = await this.settingsFactory(tgUserId.toString())
+      await this.userSettings[tgUserId].ready
+    }
+    return this.userSettings[tgUserId]
+  }
+
   setup(): void {
     this.tgBot.start((ctx) => ctx.reply('Welcome to FileY (formerly FileX)'))
     this.tgBot.command('/ls', (ctx) => this.handleLs(ctx))
     this.tgBot.command('/mkdir', (ctx) => this.handleMkdir(ctx))
+    this.tgBot.command('/toggle_list_options', (ctx) => this.hnaldeToggleListOptions(ctx))
 
     this.tgBot.on('message', (ctx) => this.handleIncomingMessage(ctx))
 
@@ -175,6 +189,12 @@ export class TelegramManager {
     await this.handleLs(ctx, page)
   }
 
+  private async hnaldeToggleListOptions(ctx: Context): Promise<void> {
+    const settings = await this.getSettings(ctx)
+    await settings.set('showListOptions', !(await settings.get()).showListOptions)
+    await this.handleLs(ctx)
+  }
+
   private async handleMkdir(ctx: Context): Promise<void> {
     const fs = await this.getFs(ctx)
     await fs.mkdir((ctx.message as Message.TextMessage).text.replace('/mkdir ', ''))
@@ -224,6 +244,7 @@ export class TelegramManager {
 
   private async handleLs(ctx: Context, page = 0): Promise<void> {
     const PAGE_SIZE = 10 as const
+    const settings = await (await this.getSettings(ctx)).get()
     const fs = await this.getFs(ctx)
     const lsRes = await fs.ls()
     const pageContent = lsRes.slice(PAGE_SIZE * page, PAGE_SIZE * (page + 1))
@@ -248,23 +269,30 @@ export class TelegramManager {
     ]
     buttons.push(
       ...pageContent.map((e) => {
-        return [
+        const row = [
           {
             text: `${getIcon(e)} ${e.name}`,
             // eslint-disable-next-line camelcase
             callback_data: new ButtonAction(e, e.isDirectory ? BUTTON_ACTION.cd : BUTTON_ACTION.cat).serialize()
-          },
-          {
-            text: '✏',
-            // eslint-disable-next-line camelcase
-            callback_data: new ButtonAction(e, BUTTON_ACTION.rename).serialize()
-          },
-          {
-            text: '❌',
-            // eslint-disable-next-line camelcase
-            callback_data: new ButtonAction(e, BUTTON_ACTION.rm).serialize()
           }
         ]
+        if (settings.showListOptions) {
+          row.push(
+            ...[
+              {
+                text: '✏',
+                // eslint-disable-next-line camelcase
+                callback_data: new ButtonAction(e, BUTTON_ACTION.rename).serialize()
+              },
+              {
+                text: '❌',
+                // eslint-disable-next-line camelcase
+                callback_data: new ButtonAction(e, BUTTON_ACTION.rm).serialize()
+              }
+            ]
+          )
+        }
+        return row
       })
     )
     if (lsRes.length > pageContent.length) {

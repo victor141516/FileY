@@ -4,12 +4,17 @@ import { CONFIG } from './config'
 
 import { Filesystem } from './filesystem'
 import { Server } from './server'
+import { UserSettings } from './settings'
 import { TelegramManager } from './telegram'
 
 const prisma = new PrismaClient()
 
 const tgBot = new Telegraf(CONFIG.TG_BOT_TOKEN)
-const tgManager = new TelegramManager(tgBot, (tgUserId: string) => new Filesystem(prisma, tgUserId))
+const tgManager = new TelegramManager(
+  tgBot,
+  (tgUserId: string) => new Filesystem(prisma, tgUserId),
+  (tgUserId: string) => new UserSettings(prisma, tgUserId)
+)
 const server = new Server(tgBot, CONFIG.WEBHOOK_HOST, CONFIG.WEBHOOK_PATH)
 
 tgManager.setup()
