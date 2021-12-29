@@ -67,7 +67,7 @@ Just to clarify the `WEBHOOK_HOST` and `WEBHOOK_PATH` part:
 
 - [ ] Be able to modify the FS using a HTTP API
 - [ ] FUSE
-- [ ] Command to toggle the show of delete and rename buttons
+- [x] Command to toggle the show of delete and rename buttons
 
 
 ## Personal
